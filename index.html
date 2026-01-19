@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Store Manager</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --staff: #6366f1;
+            --admin: #e11d48;
+            --bg: #fdfdfd;
+            --card: #ffffff;
+            --text-main: #1e293b;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+        }
+
+        * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { background-color: var(--bg); margin: 0; padding: 15px; color: var(--text-main); }
+        .container { max-width: 500px; margin: 0 auto; }
+
+        /* Lock Screen */
+        #lockScreen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: white; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 1000;
+        }
+        .lock-card { text-align: center; width: 85%; }
+        .lock-icon { font-size: 3rem; color: var(--primary); margin-bottom: 20px; }
+
+        /* Header */
+        .app-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 0 20px 0; border-bottom: 1px solid #f1f5f9; margin-bottom: 20px;
+        }
+
+        /* Admin Panel Card */
+        .admin-panel {
+            display: none; background: #fff; padding: 20px; border-radius: 20px;
+            margin-bottom: 25px; border: 1px solid #e2e8f0;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);
+        }
+        .editor-form { display: flex; flex-direction: column; gap: 16px; }
+        .admin-mode .admin-panel { display: block; animation: fadeIn 0.3s; }
+
+        .input-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        input {
+            width: 100%; padding: 14px; border: 1px solid #e2e8f0; 
+            border-radius: 12px; font-size: 16px; background: #f8fafc;
+        }
+        input:focus { outline: none; border-color: var(--primary); background: white; }
+
+        .btn {
+            border: none; padding: 14px; border-radius: 12px; font-weight: 700;
+            cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+            transition: 0.2s;
+        }
+        .btn-primary { background: var(--primary); color: white; width: 100%; }
+        .btn-admin-toggle { background: #f1f5f9; color: var(--text-main); font-size: 0.8rem; padding: 10px 18px; width: auto; }
+        
+        /* Item Cards */
+        .item-card {
+            background: white; padding: 18px; border-radius: 18px;
+            margin-bottom: 12px; display: flex; justify-content: space-between;
+            align-items: center; border: 1px solid #f1f5f9;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.01);
+        }
+        .item-name { font-weight: 700; font-size: 1.05rem; display: block; }
+        .item-qty { font-size: 0.75rem; color: var(--text-muted); font-weight: 500; }
+        
+        .price-right { text-align: right; }
+        .total-price { display: block; font-weight: 800; color: var(--text-main); font-size: 1.1rem; }
+        .per-piece { font-size: 0.7rem; color: var(--success); font-weight: 700; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; }
+
+        .admin-actions { display: none; margin-top: 10px; gap: 8px; }
+        .admin-mode .admin-actions { display: flex; }
+        .btn-icon { background: none; border: none; color: var(--text-muted); font-size: 1rem; padding: 5px; cursor: pointer; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<div id="lockScreen">
+    <div class="lock-card">
+        <div class="lock-icon"><i class="fas fa-store-alt"></i></div>
+        <h2 style="margin:0">Store Access</h2>
+        <p style="color:var(--text-muted); margin-bottom: 25px;">Enter PIN to view prices</p>
+        <input type="password" id="mainPin" placeholder="••••" maxlength="4" style="text-align: center; font-size: 24px; letter-spacing: 8px; background: #f1f5f9; border: none;">
+        <button class="btn btn-primary" onclick="checkAccess()">
+            <i class="fas fa-unlock"></i> Unlock Staff View
+        </button>
+    </div>
+</div>
+
+<div class="container content-area hidden">
+    <div class="app-header">
+        <div>
+            <h2 style="margin:0; font-size: 1.3rem;">Price List</h2>
+            <span id="itemCount" style="font-size: 0.8rem; color: var(--text-muted);">0 items listed</span>
+        </div>
+        <button class="btn btn-admin-toggle" id="adminBtn" onclick="tryAdmin()">
+            <i class="fas fa-user-shield"></i> Admin
+        </button>
+    </div>
+
+    <div class="admin-panel">
+        <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <span style="font-weight: 800; font-size: 0.8rem; color: var(--admin);"><i class="fas fa-edit"></i> EDITOR</span>
+            <button onclick="exportData()" style="background:none; border:none; color:var(--success); font-weight:bold; cursor:pointer; font-size: 0.75rem;">
+                <i class="fas fa-file-export"></i> EXPORT CSV
+            </button>
+        </div>
+
+         <div class="editor-form">
+            <input type="text" id="itemName" placeholder="Product Name (e.g. Potato Chips)">
+            <div class="input-row">
+                <input type="number" id="itemPrice" placeholder="Total Price">
+                <input type="number" id="itemQty" placeholder="Units">
+            </div>
+            <input type="hidden" id="editIndex">
+            <button class="btn btn-primary" id="saveBtn" onclick="saveItem()">
+                <i class="fas fa-check-circle"></i> Update Inventory
+            </button>
+        </div>
+    </div> <div style="position: sticky; top: 10px; z-index: 10; background: var(--bg); padding-bottom: 10px;">
+        <input type="text" id="searchBar" onkeyup="renderList()" placeholder="🔍 Search by product name..." style="box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: none;">
+    </div>
+
+    <div id="itemList"></div>
+</div>
+
+<script>
+    const STAFF_PIN = "1357"; 
+    const ADMIN_PIN = "7531"; 
+    
+    let items = JSON.parse(localStorage.getItem('smart_store_data')) || [];
+    let isAdmin = false;
+
+    function checkAccess() {
+        const pin = document.getElementById('mainPin').value;
+        if (pin.length === 4 && (pin === STAFF_PIN || pin === ADMIN_PIN)) {
+            document.getElementById('lockScreen').classList.add('hidden');
+            document.querySelector('.content-area').classList.remove('hidden');
+            renderList();
+        } else { 
+            alert("Invalid PIN."); 
+            document.getElementById('mainPin').value = "";
+        }
+    }
+
+    function tryAdmin() {
+        if (!isAdmin) {
+            const pin = prompt("Admin Security Verification (4 Digits):");
+            if (pin === ADMIN_PIN) {
+                isAdmin = true;
+                document.body.classList.add('admin-mode');
+                document.getElementById('adminBtn').innerHTML = '<i class="fas fa-sign-out-alt"></i> Exit Admin';
+                document.getElementById('adminBtn').style.background = '#fff1f2';
+                document.getElementById('adminBtn').style.color = 'var(--admin)';
+            }
+        } else {
+            isAdmin = false;
+            document.body.classList.remove('admin-mode');
+            document.getElementById('adminBtn').innerHTML = '<i class="fas fa-user-shield"></i> Admin';
+            document.getElementById('adminBtn').style.background = '#f1f5f9';
+            document.getElementById('adminBtn').style.color = 'var(--text-main)';
+        }
+    }
+
+    function saveItem() {
+        const name = document.getElementById('itemName').value;
+        const price = document.getElementById('itemPrice').value;
+        const qty = document.getElementById('itemQty').value || 1;
+        const index = document.getElementById('editIndex').value;
+
+        if (!name || !price) return;
+
+        const obj = { name, price: parseFloat(price).toFixed(2), qty: parseInt(qty) };
+        if (index === "") items.push(obj);
+        else items[index] = obj;
+
+        localStorage.setItem('smart_store_data', JSON.stringify(items));
+        clearForm();
+        renderList();
+    }
+
+    function clearForm() {
+        document.getElementById('itemName').value = '';
+        document.getElementById('itemPrice').value = '';
+        document.getElementById('itemQty').value = '';
+        document.getElementById('editIndex').value = '';
+        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-plus-circle"></i> Update Inventory';
+    }
+
+    function editItem(i) {
+        document.getElementById('itemName').value = items[i].name;
+        document.getElementById('itemPrice').value = items[i].price;
+        document.getElementById('itemQty').value = items[i].qty;
+        document.getElementById('editIndex').value = i;
+        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Save Changes';
+        window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+
+    function deleteItem(i) {
+        if(confirm("Remove item?")) { 
+            items.splice(i, 1); 
+            localStorage.setItem('smart_store_data', JSON.stringify(items)); 
+            renderList(); 
+        }
+    }
+
+    function exportData() {
+        let csv = "Item,Total Price,Quantity,Per Piece\n" + 
+                  items.map(i => `${i.name},${i.price},${i.qty},${(i.price/i.qty).toFixed(2)}`).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'store_export.csv';
+        a.click();
+    }
+
+    function renderList() {
+        const q = document.getElementById('searchBar').value.toLowerCase();
+        const list = document.getElementById('itemList');
+        list.innerHTML = '';
+
+        items.forEach((item, i) => {
+            if (item.name.toLowerCase().includes(q)) {
+                const perPiece = (item.price / item.qty).toFixed(2);
+                list.innerHTML += `
+                <div class="item-card">
+                    <div>
+                        <span class="item-name">${item.name}</span>
+                        <span class="item-qty">Pack of ${item.qty} units</span>
+                        <div class="admin-actions">
+                            <button class="btn-icon" onclick="editItem(${i})"><i class="fas fa-pen"></i></button>
+                            <button class="btn-icon" style="color:var(--admin)" onclick="deleteItem(${i})"><i class="fas fa-trash"></i></button>
+                        </div>
+                    </div>
+                    <div class="price-right">
+                        <span class="total-price">₹${item.price}</span>
+                        <span class="per-piece">₹${perPiece} / pc</span>
+                    </div>
+                </div>`;
+            }
+        });
+        document.getElementById('itemCount').innerText = `${items.length} items listed`;
+    }
+</script>
+</body>
+</html>
