@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Smart Store Manager</title>
+    <title>Smart Store Manager - Cloud Sync</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
@@ -100,7 +100,7 @@
     <div class="app-header">
         <div>
             <h2 style="margin:0; font-size: 1.3rem;">Price List</h2>
-            <span id="itemCount" style="font-size: 0.8rem; color: var(--text-muted);">0 items listed</span>
+            <span id="itemCount" style="font-size: 0.8rem; color: var(--text-muted);">Connecting to cloud...</span>
         </div>
         <button class="btn btn-admin-toggle" id="adminBtn" onclick="tryAdmin()">
             <i class="fas fa-user-shield"></i> Admin
@@ -123,29 +123,37 @@
             </div>
             <input type="hidden" id="editIndex">
             <button class="btn btn-primary" id="saveBtn" onclick="saveItem()">
-                <i class="fas fa-check-circle"></i> Update Inventory
+                <i class="fas fa-check-circle"></i> Update Cloud Inventory
             </button>
         </div>
-    </div> <div style="position: sticky; top: 10px; z-index: 10; background: var(--bg); padding-bottom: 10px;">
-        <input type="text" id="searchBar" onkeyup="renderList()" placeholder="🔍 Search by product name..." style="box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: none;">
+    </div> 
+
+    <div style="position: sticky; top: 10px; z-index: 10; background: var(--bg); padding-bottom: 10px; display: flex; gap: 8px;">
+        <input type="text" id="searchBar" onkeyup="renderList()" placeholder="🔍 Search..." style="box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: none;">
+        <button onclick="renderList()" class="btn" style="width: 50px; padding: 0; background: white; border: 1px solid #eee;"><i class="fas fa-sync"></i></button>
     </div>
 
     <div id="itemList"></div>
 </div>
 
 <script>
+    // ==========================================
+    // 1. PASTE YOUR GOOGLE WEB APP URL HERE
+    // ==========================================
+    const SHEET_URL = "https://script.google.com/macros/s/AKfycby3i7LWn5sr18FG3Cw7-JUOfcQEdgJav4DA7Phtl2kSD98KQu9UOzlNUbIgiw9hK0wOzw/exec"; 
+
     const STAFF_PIN = "1357"; 
     const ADMIN_PIN = "7531"; 
     
-    let items = JSON.parse(localStorage.getItem('smart_store_data')) || [];
+    let items = [];
     let isAdmin = false;
 
-    function checkAccess() {
+    async function checkAccess() {
         const pin = document.getElementById('mainPin').value;
         if (pin.length === 4 && (pin === STAFF_PIN || pin === ADMIN_PIN)) {
             document.getElementById('lockScreen').classList.add('hidden');
             document.querySelector('.content-area').classList.remove('hidden');
-            renderList();
+            await renderList();
         } else { 
             alert("Invalid PIN."); 
             document.getElementById('mainPin').value = "";
@@ -171,21 +179,36 @@
         }
     }
 
-    function saveItem() {
+    async function saveItem() {
         const name = document.getElementById('itemName').value;
         const price = document.getElementById('itemPrice').value;
         const qty = document.getElementById('itemQty').value || 1;
-        const index = document.getElementById('editIndex').value;
 
         if (!name || !price) return;
 
-        const obj = { name, price: parseFloat(price).toFixed(2), qty: parseInt(qty) };
-        if (index === "") items.push(obj);
-        else items[index] = obj;
+        const saveBtn = document.getElementById('saveBtn');
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
+        saveBtn.style.opacity = "0.7";
+        saveBtn.disabled = true;
 
-        localStorage.setItem('smart_store_data', JSON.stringify(items));
-        clearForm();
-        renderList();
+        try {
+            await fetch(SHEET_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                body: JSON.stringify({ name, price, qty })
+            });
+            
+            // Wait slightly for Google Sheets to update
+            setTimeout(async () => {
+                clearForm();
+                await renderList();
+                saveBtn.disabled = false;
+                saveBtn.style.opacity = "1";
+            }, 1000);
+        } catch (e) {
+            alert("Sync Failed. Check internet.");
+            saveBtn.disabled = false;
+        }
     }
 
     function clearForm() {
@@ -193,23 +216,25 @@
         document.getElementById('itemPrice').value = '';
         document.getElementById('itemQty').value = '';
         document.getElementById('editIndex').value = '';
-        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-plus-circle"></i> Update Inventory';
+        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Update Cloud Inventory';
     }
 
     function editItem(i) {
         document.getElementById('itemName').value = items[i].name;
         document.getElementById('itemPrice').value = items[i].price;
         document.getElementById('itemQty').value = items[i].qty;
-        document.getElementById('editIndex').value = i;
-        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Save Changes';
+        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Overwrite in Cloud';
         window.scrollTo({top: 0, behavior: 'smooth'});
     }
 
-    function deleteItem(i) {
-        if(confirm("Remove item?")) { 
-            items.splice(i, 1); 
-            localStorage.setItem('smart_store_data', JSON.stringify(items)); 
-            renderList(); 
+    async function deleteItem(name) {
+        if(confirm("Delete '" + name + "' from Cloud?")) { 
+            await fetch(SHEET_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                body: JSON.stringify({ action: 'delete', name: name })
+            });
+            setTimeout(renderList, 1000);
         }
     }
 
@@ -223,11 +248,18 @@
         a.click();
     }
 
-    function renderList() {
+    async function renderList() {
         const q = document.getElementById('searchBar').value.toLowerCase();
         const list = document.getElementById('itemList');
-        list.innerHTML = '';
+        
+        if (items.length === 0 || q === "") {
+            try {
+                const response = await fetch(SHEET_URL);
+                items = await response.json();
+            } catch(e) { console.log("Fetch failed"); }
+        }
 
+        list.innerHTML = '';
         items.forEach((item, i) => {
             if (item.name.toLowerCase().includes(q)) {
                 const perPiece = (item.price / item.qty).toFixed(2);
@@ -238,7 +270,7 @@
                         <span class="item-qty">Pack of ${item.qty} units</span>
                         <div class="admin-actions">
                             <button class="btn-icon" onclick="editItem(${i})"><i class="fas fa-pen"></i></button>
-                            <button class="btn-icon" style="color:var(--admin)" onclick="deleteItem(${i})"><i class="fas fa-trash"></i></button>
+                            <button class="btn-icon" style="color:var(--admin)" onclick="deleteItem('${item.name}')"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>
                     <div class="price-right">
@@ -248,7 +280,7 @@
                 </div>`;
             }
         });
-        document.getElementById('itemCount').innerText = `${items.length} items listed`;
+        document.getElementById('itemCount').innerText = `${items.length} items synced`;
     }
 </script>
 </body>
