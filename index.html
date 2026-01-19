@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Smart Store Manager - Cloud Sync</title>
+    <title>Smart Store Manager - Fast Sync</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
@@ -100,7 +100,7 @@
     <div class="app-header">
         <div>
             <h2 style="margin:0; font-size: 1.3rem;">Price List</h2>
-            <span id="itemCount" style="font-size: 0.8rem; color: var(--text-muted);">Connecting to cloud...</span>
+            <span id="itemCount" style="font-size: 0.8rem; color: var(--text-muted);">Syncing...</span>
         </div>
         <button class="btn btn-admin-toggle" id="adminBtn" onclick="tryAdmin()">
             <i class="fas fa-user-shield"></i> Admin
@@ -116,12 +116,11 @@
         </div>
 
          <div class="editor-form">
-            <input type="text" id="itemName" placeholder="Product Name (e.g. Potato Chips)">
+            <input type="text" id="itemName" placeholder="Product Name">
             <div class="input-row">
                 <input type="number" id="itemPrice" placeholder="Total Price">
                 <input type="number" id="itemQty" placeholder="Units">
             </div>
-            <input type="hidden" id="editIndex">
             <button class="btn btn-primary" id="saveBtn" onclick="saveItem()">
                 <i class="fas fa-check-circle"></i> Update Cloud Inventory
             </button>
@@ -129,23 +128,22 @@
     </div> 
 
     <div style="position: sticky; top: 10px; z-index: 10; background: var(--bg); padding-bottom: 10px; display: flex; gap: 8px;">
-        <input type="text" id="searchBar" onkeyup="renderList()" placeholder="🔍 Search..." style="box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: none;">
-        <button onclick="renderList()" class="btn" style="width: 50px; padding: 0; background: white; border: 1px solid #eee;"><i class="fas fa-sync"></i></button>
+        <input type="text" id="searchBar" onkeyup="renderList(true)" placeholder="🔍 Search product..." style="box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: none;">
+        <button onclick="fetchFreshData()" class="btn" style="width: 50px; padding: 0; background: white; border: 1px solid #eee;"><i class="fas fa-sync"></i></button>
     </div>
 
     <div id="itemList"></div>
 </div>
 
 <script>
-    // ==========================================
-    // 1. PASTE YOUR GOOGLE WEB APP URL HERE
-    // ==========================================
+    // YOUR INTEGRATED SHEET URL
     const SHEET_URL = "https://script.google.com/macros/s/AKfycby3i7LWn5sr18FG3Cw7-JUOfcQEdgJav4DA7Phtl2kSD98KQu9UOzlNUbIgiw9hK0wOzw/exec"; 
 
     const STAFF_PIN = "1357"; 
     const ADMIN_PIN = "7531"; 
     
-    let items = [];
+    // Load from local memory immediately for instant display
+    let items = JSON.parse(localStorage.getItem('store_cache')) || [];
     let isAdmin = false;
 
     async function checkAccess() {
@@ -153,7 +151,9 @@
         if (pin.length === 4 && (pin === STAFF_PIN || pin === ADMIN_PIN)) {
             document.getElementById('lockScreen').classList.add('hidden');
             document.querySelector('.content-area').classList.remove('hidden');
-            await renderList();
+            
+            renderList(true); // Load cache immediately
+            fetchFreshData(); // Get fresh data from cloud in background
         } else { 
             alert("Invalid PIN."); 
             document.getElementById('mainPin').value = "";
@@ -162,23 +162,20 @@
 
     function tryAdmin() {
         if (!isAdmin) {
-            const pin = prompt("Admin Security Verification (4 Digits):");
+            const pin = prompt("Admin Security Verification:");
             if (pin === ADMIN_PIN) {
                 isAdmin = true;
                 document.body.classList.add('admin-mode');
                 document.getElementById('adminBtn').innerHTML = '<i class="fas fa-sign-out-alt"></i> Exit Admin';
-                document.getElementById('adminBtn').style.background = '#fff1f2';
-                document.getElementById('adminBtn').style.color = 'var(--admin)';
             }
         } else {
             isAdmin = false;
             document.body.classList.remove('admin-mode');
             document.getElementById('adminBtn').innerHTML = '<i class="fas fa-user-shield"></i> Admin';
-            document.getElementById('adminBtn').style.background = '#f1f5f9';
-            document.getElementById('adminBtn').style.color = 'var(--text-main)';
         }
     }
 
+    // SPEED: Instant update UI, then sync cloud
     async function saveItem() {
         const name = document.getElementById('itemName').value;
         const price = document.getElementById('itemPrice').value;
@@ -186,80 +183,61 @@
 
         if (!name || !price) return;
 
-        const saveBtn = document.getElementById('saveBtn');
-        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
-        saveBtn.style.opacity = "0.7";
-        saveBtn.disabled = true;
+        const newItem = { name, price: parseFloat(price).toFixed(2), qty: parseInt(qty) };
 
-        try {
-            await fetch(SHEET_URL, {
-                method: 'POST',
-                mode: 'no-cors',
-                body: JSON.stringify({ name, price, qty })
-            });
-            
-            // Wait slightly for Google Sheets to update
-            setTimeout(async () => {
-                clearForm();
-                await renderList();
-                saveBtn.disabled = false;
-                saveBtn.style.opacity = "1";
-            }, 1000);
-        } catch (e) {
-            alert("Sync Failed. Check internet.");
-            saveBtn.disabled = false;
-        }
-    }
+        // 1. Update UI Instantly (Optimistic UI)
+        const idx = items.findIndex(i => i.name === name);
+        if (idx > -1) items[idx] = newItem;
+        else items.push(newItem);
+        
+        renderList(true);
+        clearForm();
 
-    function clearForm() {
-        document.getElementById('itemName').value = '';
-        document.getElementById('itemPrice').value = '';
-        document.getElementById('itemQty').value = '';
-        document.getElementById('editIndex').value = '';
-        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Update Cloud Inventory';
-    }
-
-    function editItem(i) {
-        document.getElementById('itemName').value = items[i].name;
-        document.getElementById('itemPrice').value = items[i].price;
-        document.getElementById('itemQty').value = items[i].qty;
-        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Overwrite in Cloud';
-        window.scrollTo({top: 0, behavior: 'smooth'});
+        // 2. Sync with Cloud in background
+        fetch(SHEET_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            body: JSON.stringify(newItem)
+        }).then(() => {
+            localStorage.setItem('store_cache', JSON.stringify(items));
+            document.getElementById('itemCount').innerText = `${items.length} items (Synced)`;
+        });
     }
 
     async function deleteItem(name) {
-        if(confirm("Delete '" + name + "' from Cloud?")) { 
-            await fetch(SHEET_URL, {
-                method: 'POST',
-                mode: 'no-cors',
-                body: JSON.stringify({ action: 'delete', name: name })
-            });
-            setTimeout(renderList, 1000);
+        if(!confirm("Delete from cloud?")) return;
+
+        // 1. Update UI Instantly
+        items = items.filter(i => i.name !== name);
+        renderList(true);
+
+        // 2. Sync Cloud
+        fetch(SHEET_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            body: JSON.stringify({ action: 'delete', name: name })
+        }).then(() => {
+            localStorage.setItem('store_cache', JSON.stringify(items));
+        });
+    }
+
+    async function fetchFreshData() {
+        document.getElementById('itemCount').innerText = "Syncing...";
+        try {
+            const res = await fetch(SHEET_URL);
+            items = await res.json();
+            localStorage.setItem('store_cache', JSON.stringify(items));
+            renderList(false);
+        } catch(e) {
+            document.getElementById('itemCount').innerText = `${items.length} items (Offline)`;
         }
     }
 
-    function exportData() {
-        let csv = "Item,Total Price,Quantity,Per Piece\n" + 
-                  items.map(i => `${i.name},${i.price},${i.qty},${(i.price/i.qty).toFixed(2)}`).join("\n");
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'store_export.csv';
-        a.click();
-    }
-
-    async function renderList() {
+    function renderList(isFast = false) {
         const q = document.getElementById('searchBar').value.toLowerCase();
         const list = document.getElementById('itemList');
-        
-        if (items.length === 0 || q === "") {
-            try {
-                const response = await fetch(SHEET_URL);
-                items = await response.json();
-            } catch(e) { console.log("Fetch failed"); }
-        }
-
         list.innerHTML = '';
+
         items.forEach((item, i) => {
             if (item.name.toLowerCase().includes(q)) {
                 const perPiece = (item.price / item.qty).toFixed(2);
@@ -280,7 +258,31 @@
                 </div>`;
             }
         });
-        document.getElementById('itemCount').innerText = `${items.length} items synced`;
+        document.getElementById('itemCount').innerText = `${items.length} items ${isFast ? '(Syncing...)' : '(Synced)'}`;
+    }
+
+    function clearForm() {
+        document.getElementById('itemName').value = '';
+        document.getElementById('itemPrice').value = '';
+        document.getElementById('itemQty').value = '';
+        document.getElementById('saveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Update Cloud Inventory';
+    }
+
+    function editItem(i) {
+        document.getElementById('itemName').value = items[i].name;
+        document.getElementById('itemPrice').value = items[i].price;
+        document.getElementById('itemQty').value = items[i].qty;
+        window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+
+    function exportData() {
+        let csv = "Item,Total Price,Quantity,Per Piece\n" + 
+                  items.map(i => `${i.name},${i.price},${i.qty},${(i.price/i.qty).toFixed(2)}`).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'store_export.csv';
+        a.click();
     }
 </script>
 </body>
